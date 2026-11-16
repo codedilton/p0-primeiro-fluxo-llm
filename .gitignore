@@ -1,0 +1,11 @@
+# Credenciais e segredos
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+venv/
+.venv/
+
+# Sistema operacional
+.DS_Store
