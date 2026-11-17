@@ -1,30 +1,36 @@
-"""Classificador de mensagens de atendimento — P0, nível Básico.
+"""Classificador de mensagens de atendimento — P0, nível Intermediário.
 
 Problema: recebe a mensagem de um cliente ou colega e devolve uma de
 três categorias: duvida, reclamacao ou elogio.
 
-Ciclo do programa (o "primeiro fluxo LLM"):
-    entrada de texto -> chamada à API do LLM -> tratamento da resposta -> saída
+Responsabilidades separadas por módulo (enunciado do Intermediário):
+
+    captura da entrada ............ main  (ler_entrada, exibir_*)
+    carregamento da config ........ config
+    preparação da solicitação ..... llm_client.montar_solicitacao
+    chamada ao modelo ............. llm_client.chamar_modelo
+    tratamento da resposta ........ llm_client.extrair_texto/validar_categoria
+    apresentação do resultado ..... main
 
 Execução:
-    export GROQ_API_KEY="sua-chave"   (ou use um arquivo .env)
+    cp .env.example .env   (e preencha IA_API_KEY)
     python3 src/main.py
 """
 
 import os
 import sys
 
-import requests
-
-# --- Configuração do serviço (fora do código fica só a chave) ---
-
-API_URL = "https://api.groq.com/openai/v1/chat/completions"
-MODEL = "openai/gpt-oss-20b"
-TIMEOUT_SEGUNDOS = 30
-
-# Categorias que o prompt aceita. "invalida" é a saída combinada para
-# mensagens que não se encaixam em nenhuma das três.
-CATEGORIAS_VALIDAS = {"duvida", "reclamacao", "elogio", "invalida"}
+import config
+import llm_client
+from erros import (
+    ErroAutenticacao,
+    ErroClassificador,
+    ErroComunicacao,
+    ErroConfiguracao,
+    ErroEntradaInvalida,
+    ErroRespostaInvalida,
+    ErroServicoIndisponivel,
+)
 
 # Rótulos legíveis para exibir ao usuário.
 ROTULOS = {
@@ -34,77 +40,97 @@ ROTULOS = {
     "invalida": "NÃO SE ENCAIXA EM NENHUMA CATEGORIA",
 }
 
-# O prompt segue 5 blocos: papel, tarefa, regras, caso de borda e entrada.
-# O caso de borda (INVALIDA) é o que permite detectar mensagens fora do escopo.
-PROMPT_SISTEMA = (
-    "Você é um classificador de mensagens de atendimento. "
-    "Classifique a mensagem abaixo em exatamente uma categoria. "
-    "Categorias válidas: duvida, reclamacao, elogio, invalida. "
-    "Se a mensagem não se encaixar em nenhuma, responda: INVALIDA. "
-    "Responda apenas com a categoria, em minúsculas, sem pontuação "
-    "e sem nenhuma outra palavra."
-)
-
-# Modelo de raciocínio: gasta tokens "pensando" antes de responder,
-# por isso max_tokens precisa ser maior que o tamanho da resposta final.
-MAX_TOKENS = 300
-TEMPERATURA = 0.0  # classificação: mesma mensagem deve gerar a mesma categoria
+MAX_TENTATIVAS_ENTRADA = 2
 
 
-def ler_entrada() -> str:
-    """Lê a mensagem do usuário no terminal e remove espaços das pontas."""
+def ler_entrada(tentativa: int) -> str:
+    """Lê a mensagem no terminal e devolve o texto sem espaços das pontas.
+
+    O alerta de mensagem vazia e a segunda tentativa ficam no main;
+    aqui é apenas captura de entrada.
+    """
+    if tentativa > 1:
+        return input("Última tentativa — digite a mensagem a classificar: ").strip()
     return input("Cole ou digite a mensagem a classificar: ").strip()
 
 
-def chamar_llm(mensagem: str, api_key: str) -> str:
-    """Envia a mensagem ao LLM e devolve o texto bruto da resposta."""
-    resposta = requests.post(
-        API_URL,
-        headers={"Authorization": f"Bearer {api_key}"},
-        json={
-            "model": MODEL,
-            "temperature": TEMPERATURA,
-            "max_tokens": MAX_TOKENS,
-            "messages": [
-                {"role": "system", "content": PROMPT_SISTEMA},
-                {"role": "user", "content": mensagem},
-            ],
-        },
-        timeout=TIMEOUT_SEGUNDOS,
-    )
+def carregar_configuracao() -> dict:
+    """Delega ao módulo config e confirma o carregamento ao usuário."""
+    configuracao = config.carregar()
+    print(f"Configuração carregada (modelo: {configuracao['model']}).")
+    return configuracao
 
-    if resposta.status_code != 200:
-        # Tratamento completo de erros chega no nível Intermediário;
-        # por ora, mostramos o status e o texto devolvido pelo serviço.
-        sys.exit(f"Erro HTTP {resposta.status_code}: {resposta.text}")
 
-    dados = resposta.json()
-    # O texto gerado fica em choices[0].message.content. O modelo de
-    # raciocínio pode devolver content vazio se gastar tokens pensando;
-    # por isso o "or ''".
-    return dados["choices"][0]["message"].get("content") or ""
+def classificar(mensagem: str, configuracao: dict) -> str:
+    """Percorre o ciclo completo e devolve a categoria validada."""
+    texto_bruto = llm_client.chamar_modelo(mensagem, configuracao)
+    return llm_client.validar_categoria(texto_bruto)
+
+
+def exibir_resultado(categoria: str) -> None:
+    """Apresenta a categoria ao usuário com rótulo legível."""
+    print(f"Categoria: {ROTULOS[categoria]}")
+
+
+def dica_do_erro(erro: Exception) -> str:
+    """Sugestão de próximo passo para cada tipo de falha."""
+    if isinstance(erro, ErroConfiguracao):
+        return "Copie o .env.example para .env e preencha a credencial."
+    if isinstance(erro, ErroAutenticacao):
+        return "Gere uma nova chave no seu provedor e atualize o .env."
+    if isinstance(erro, ErroComunicacao):
+        return "Verifique sua conexão e execute o programa novamente."
+    if isinstance(erro, ErroServicoIndisponivel):
+        return "Aguarde alguns minutos antes de tentar novamente."
+    if isinstance(erro, ErroRespostaInvalida):
+        return "Se persistir, tente novamente — pode ser instabilidade temporária do provedor."
+    if isinstance(erro, ErroEntradaInvalida):
+        return "Execute o programa novamente e digite uma mensagem."
+    return ""
+
+
+def encerrar_com_erro(erro: ErroClassificador) -> None:
+    """Traduz o erro para mensagem amigável e encerra de forma controlada.
+
+    Nenhum traceback técnico chega ao usuário; os detalhes ficam
+    disponíveis em modo de depuração (variável IA_DEBUG=1).
+    """
+    print(f"\nErro: {erro}")
+    dica = dica_do_erro(erro)
+    if dica:
+        print(f"Sugestão: {dica}")
+    if os.environ.get("IA_DEBUG") == "1":
+        import traceback
+
+        traceback.print_exc()
+    sys.exit(1)
 
 
 def main() -> None:
-    # Credencial fora do código: vem do ambiente (ou de um .env carregado
-    # antes da execução). Sem ela, o programa nem tenta chamar a API.
-    api_key = os.environ.get("GROQ_API_KEY")
-    if not api_key:
-        sys.exit('Defina a variável GROQ_API_KEY no ambiente (ex.: export GROQ_API_KEY="sua-chave").')
+    try:
+        configuracao = carregar_configuracao()
 
-    mensagem = ler_entrada()
-    if not mensagem:
-        sys.exit("Forneça um texto válido: a mensagem não pode ser vazia.")
+        mensagem = ""
+        for tentativa in range(1, MAX_TENTATIVAS_ENTRADA + 1):
+            mensagem = ler_entrada(tentativa)
+            if mensagem:
+                break
+            if tentativa < MAX_TENTATIVAS_ENTRADA:
+                print("A mensagem está vazia. Você tem mais uma tentativa.\n")
 
-    categoria_bruta = chamar_llm(mensagem, api_key)
+        if not mensagem:
+            raise ErroEntradaInvalida(
+                "Nenhuma mensagem foi fornecida após duas tentativas."
+            )
 
-    # Normalização: o modelo pode responder com espaços ou maiúsculas
-    # a mais (" Reclamação "). Padronizamos antes de validar.
-    categoria = categoria_bruta.strip().lower()
-    if categoria not in CATEGORIAS_VALIDAS:
-        sys.exit(f"Resposta inesperada do modelo: {categoria_bruta!r}")
+        categoria = classificar(mensagem, configuracao)
+        exibir_resultado(categoria)
 
-    print(f"Categoria: {ROTULOS[categoria]}")
+    except ErroClassificador as erro:
+        encerrar_com_erro(erro)
+    except KeyboardInterrupt:
+        print("\nEncerrado pelo usuário.")
+        sys.exit(130)
 
 
 if __name__ == "__main__":
