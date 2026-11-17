@@ -13,6 +13,7 @@ Exemplo de uso:
 
 ```
 $ python3 src/main.py
+Configuração carregada (modelo: openai/gpt-oss-20b).
 Cole ou digite a mensagem a classificar: Comprei um produto e ele chegou quebrado. Ja mandei tres e-mails e ninguem responde. Quero meu dinheiro de volta!
 Categoria: RECLAMAÇÃO
 ```
@@ -22,7 +23,7 @@ Mensagens que não se encaixam em nenhuma das três categorias recebem o rótulo
 ## Requisitos
 
 - Python 3.10 ou superior
-- Uma chave de API do [Groq](https://console.groq.com) (gratuita, sem cartão de crédito)
+- Uma chave de API de um provedor de IA. O padrão do projeto é o [Groq](https://console.groq.com) (chave gratuita, sem cartão de crédito); outros provedores com endpoint compatível com OpenAI funcionam ajustando a configuração (ver abaixo).
 
 ## Instalação
 
@@ -36,18 +37,22 @@ pip install -r requirements.txt
 
 ## Configuração
 
-1. Crie uma conta em [console.groq.com](https://console.groq.com) e gere uma chave em [console.groq.com/keys](https://console.groq.com/keys).
-2. Exporte a chave como variável de ambiente (ela **não** fica no código):
+1. Copie o modelo de configuração e preencha a sua credencial:
 
 ```bash
-export GROQ_API_KEY="sua-chave-aqui"
+cp .env.example .env
 ```
 
-Alternativa: coloque a linha `GROQ_API_KEY=sua-chave-aqui` em um arquivo `.env` na raiz do projeto e carregue-o antes de executar:
+2. Edite o `.env` e defina `IA_API_KEY` com a chave do seu provedor de IA (no Groq, gere a chave em [console.groq.com/keys](https://console.groq.com/keys)). O `.env` **não** vai para o Git — está protegido pelo `.gitignore`.
 
-```bash
-set -a; source .env; set +a
+3. Opcional: para usar outro provedor com endpoint compatível com OpenAI, defina também no `.env`:
+
 ```
+IA_API_URL=https://do-seu-provedor.com/v1/chat/completions
+IA_MODEL=nome-do-modelo
+```
+
+Nenhuma credencial fica no código: o programa carrega o `.env` automaticamente (via `python-dotenv`).
 
 ## Como executar
 
@@ -55,36 +60,67 @@ set -a; source .env; set +a
 python3 src/main.py
 ```
 
-O programa pede a mensagem, envia ao LLM e mostra a categoria.
+O programa pede a mensagem, envia ao provedor de IA e mostra a categoria. Se a mensagem vier vazia, ele alerta e dá uma segunda tentativa.
 
-## Como funciona
+## Organização do código
 
-O fluxo em `src/main.py`:
+Cada responsabilidade do ciclo vive em um módulo próprio:
 
-```
-entrada de texto  →  chamada à API do LLM  →  tratamento da resposta  →  saída
-```
+| Responsabilidade | Onde vive |
+|---|---|
+| Captura da entrada | `src/main.py` (`ler_entrada`) |
+| Carregamento da configuração | `src/config.py` |
+| Preparação da solicitação | `src/llm_client.py` (`montar_solicitacao`) |
+| Chamada ao modelo | `src/llm_client.py` (`chamar_modelo`) |
+| Tratamento da resposta | `src/llm_client.py` (`extrair_texto`, `validar_categoria`) |
+| Apresentação do resultado | `src/main.py` (`exibir_resultado`) |
 
-- **Serviço:** API do Groq, endpoint compatível com OpenAI (`/openai/v1/chat/completions`).
-- **Modelo:** `openai/gpt-oss-20b` — pequeno e rápido, adequado a classificação.
-- **Parâmetros:** `temperature 0.0` (classificação deve ser consistente: a mesma mensagem gera sempre a mesma categoria) e `max_tokens 300` (o modelo raciocina antes de responder, e o raciocínio consome tokens além da resposta final, que é uma única palavra).
-- **Prompt:** papel + tarefa + regras + caso de borda (mensagens fora do escopo → `INVALIDA`) + mensagem do usuário.
-- **Validação:** a resposta do modelo é normalizada (`strip().lower()`) e conferida contra a lista de categorias válidas antes de ser exibida.
+Módulos de apoio: `src/prompts.py` (categorias válidas e montagem do prompt) e `src/erros.py` (os seis tipos de erro com nome próprio).
 
-## Testes manuais realizados
+## Tratamento de erros
 
-Cada caso: entrada → comportamento esperado → comportamento obtido.
+Cada situação previsível tem uma exceção específica, uma mensagem compreensível e uma sugestão de próximo passo. Nenhum traceback técnico chega ao usuário; detalhes ficam disponíveis executando com `IA_DEBUG=1`.
 
-| # | Entrada | Esperado | Obtido |
+| Situação | Exceção | Mensagem ao usuário |
+|---|---|---|
+| Credencial ausente | `ErroConfiguracao` | "Credencial ausente: defina IA_API_KEY no arquivo .env" |
+| Credencial inválida (HTTP 401/403) | `ErroAutenticacao` | "Credencial inválida: o provedor de IA recusou a chave" |
+| Limite de uso (HTTP 429) | `ErroServicoIndisponivel` | "Limite de uso do provedor atingido; aguarde e tente novamente" |
+| Serviço fora do ar (HTTP 5xx) | `ErroServicoIndisponivel` | "O provedor de IA está indisponível no momento" |
+| Timeout | `ErroComunicacao` | "Tempo esgotado ao contatar o provedor de IA" |
+| Falha de rede | `ErroComunicacao` | "Não foi possível conectar; verifique sua conexão" |
+| Resposta vazia ou inesperada | `ErroRespostaInvalida` | "O modelo não devolveu texto" / "resposta em formato inesperado" |
+| Entrada vazia (2 tentativas) | `ErroEntradaInvalida` | alerta na 1ª tentativa; encerramento controlado na 2ª |
+
+## Testes
+
+Os testes reais usam o serviço de verdade; os simulados verificam o comportamento sem rede (respostas e falhas fabricadas em memória). A distinção segue a especificação do nível Intermediário.
+
+### Testes reais
+
+| # | Situação | Esperado | Obtido |
 |---|---|---|---|
-| 1 | Reclamação de produto quebrado sem resposta do suporte | RECLAMAÇÃO | RECLAMAÇÃO ✓ |
-| 2 | Elogio ao atendimento | ELOGIO | ELOGIO ✓ |
-| 3 | Pergunta sobre cor disponível e prazo de entrega | DÚVIDA | DÚVIDA ✓ |
-| 4 | Entrada vazia (Enter sem digitar) | Mensagem clara, sem chamada à API | "Forneça um texto válido" ✓ |
-| 5 | Execução sem `GROQ_API_KEY` definida | Mensagem clara, sem chamada à API | "Defina a variável GROQ_API_KEY..." ✓ |
+| 1 | Reclamação real ("produto chegou quebrado... quero meu dinheiro de volta") | RECLAMAÇÃO | RECLAMAÇÃO ✓ |
+| 2 | Dúvida real ("vocês têm na cor azul? qual o prazo?") | DÚVIDA | DÚVIDA ✓ |
+| 3 | Credencial ausente (pasta sem `.env`) | Mensagem clara, sem chamada à API | "Credencial ausente: defina IA_API_KEY..." ✓ |
+| 4 | Credencial inválida (chave falsa no `.env` → HTTP 401 real do serviço) | Mensagem clara, sem expor segredo | "Credencial inválida: o provedor de IA recusou a chave" ✓ |
+| 5 | Entrada vazia duas vezes | Alerta na 1ª, encerramento controlado na 2ª | "Nenhuma mensagem foi fornecida após duas tentativas." ✓ |
+
+### Testes simulados (sem rede)
+
+| # | Situação simulada | Esperado | Obtido |
+|---|---|---|---|
+| 6 | Timeout do provedor | `ErroComunicacao` com mensagem amigável | ✓ |
+| 7 | Falha de conexão | `ErroComunicacao` com mensagem amigável | ✓ |
+| 8 | HTTP 503 (fora do ar) | `ErroServicoIndisponivel` | ✓ |
+| 9 | HTTP 429 (limite) | `ErroServicoIndisponivel` | ✓ |
+| 10 | JSON em formato inesperado | `ErroRespostaInvalida` | ✓ |
+| 11 | Resposta vazia (content vazio) | `ErroRespostaInvalida` | ✓ |
+| 12 | Categoria fora do combinado ("talvez") | `ErroRespostaInvalida` | ✓ |
+| 13 | Normalização ("  Reclamacao  ") | categoria validada | ✓ |
 
 ## Roadmap
 
-- [x] **Básico** — núcleo funcional: entrada → LLM → saída, chave fora do código
-- [ ] **Intermediário** — funções com responsabilidade única, tratamento específico de erros (autenticação, rede, indisponibilidade, resposta inesperada)
-- [ ] **Avançado** — testes automatizados, `.env.example`, README completo, branch + pull request, documento de decisões
+- [x] **Básico** — núcleo funcional: entrada → provedor de IA → saída, chave fora do código
+- [x] **Intermediário** — módulos com responsabilidade única, seis tipos de erro tratados especificamente, `.env.example`, testes reais e simulados
+- [ ] **Avançado** — testes automatizados na suíte, configuração externa dos parâmetros, registro de execução sem dados sensíveis, validação em ambiente limpo
