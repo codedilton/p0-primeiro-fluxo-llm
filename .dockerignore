@@ -1,0 +1,7 @@
+# Exclui tudo e devolve apenas o que a imagem precisa:
+# assim .env, materiais do curso e histórico do Git nunca
+# viram camada da imagem.
+*
+!requirements.txt
+!src/
+!src/**
