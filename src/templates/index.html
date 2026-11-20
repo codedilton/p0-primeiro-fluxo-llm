@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Classificador de Mensagens de Atendimento</title>
+    <style>
+        body { font-family: system-ui, -apple-system, sans-serif; background: #f4f6f8; margin: 0; }
+        .container { max-width: 640px; margin: 3rem auto; padding: 0 1rem; }
+        .card { background: #fff; border-radius: 12px; padding: 2rem; box-shadow: 0 2px 12px rgba(0,0,0,.08); }
+        h1 { font-size: 1.3rem; margin-top: 0; }
+        p.descricao { color: #555; }
+        label { display: block; font-weight: 600; margin-bottom: .4rem; }
+        textarea { width: 100%; box-sizing: border-box; min-height: 120px; padding: .75rem;
+                   border: 1px solid #ccd; border-radius: 8px; font: inherit; resize: vertical; }
+        button { margin-top: 1rem; background: #1d4ed8; color: #fff; border: none; padding: .7rem 1.4rem;
+                 border-radius: 8px; font-size: 1rem; cursor: pointer; }
+        button:hover { background: #1e40af; }
+        .resultado { margin-top: 1.5rem; padding: 1rem; border-radius: 8px; background: #ecfdf5;
+                     border: 1px solid #a7f3d0; font-weight: 700; }
+        .erro { margin-top: 1.5rem; padding: 1rem; border-radius: 8px; background: #fef2f2;
+                border: 1px solid #fecaca; color: #991b1b; }
+        .rotulo-enviada { margin-top: 1.5rem; color: #666; font-style: italic; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="card">
+            <h1>Classificador de mensagens de atendimento</h1>
+            <p class="descricao">Cole ou digite a mensagem de um cliente ou colega. O programa devolve a categoria:
+                dúvida, reclamação ou elogio.</p>
+
+            <form method="post" action="/">
+                <label for="mensagem">Mensagem</label>
+                <textarea id="mensagem" name="mensagem" maxlength="4000"
+                          placeholder="Ex.: Comprei um produto e ele chegou quebrado, e ninguém responde meus e-mails...">{{ mensagem_enviada or '' }}</textarea>
+                <button type="submit">Classificar</button>
+            </form>
+
+            {% if erro %}
+                <div class="erro"><strong>Erro:</strong> {{ erro }}</div>
+            {% endif %}
+
+            {% if resultado %}
+                <div class="resultado">Categoria: {{ resultado }}</div>
+            {% endif %}
+
+            {% if mensagem_enviada %}
+                <p class="rotulo-enviada">Mensagem enviada: "{{ mensagem_enviada }}"</p>
+            {% endif %}
+        </div>
+    </div>
+</body>
+</html>

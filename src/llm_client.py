@@ -46,13 +46,30 @@ def chamar_modelo(mensagem: str, config: dict) -> str:
     """
     corpo = montar_solicitacao(mensagem, config)
 
+    headers = {}
+    if not config.get("sem_autenticacao"):
+        # A credencial vai só no header da requisição; nunca em log.
+        headers["Authorization"] = f"Bearer {config['api_key']}"
+
     try:
         resposta = requests.post(
             config["api_url"],
-            headers={"Authorization": f"Bearer {config['api_key']}"},
+            headers=headers,
             json=corpo,
             timeout=config["timeout"],
+            verify=config.get("verificar_tls", True),
         )
+    except requests.exceptions.SSLError as erro_ssl:
+        # Certificado do ambiente interno sem confiança pública
+        # (comum em redes privadas, com certificado próprio).
+        if "certificate verify failed" in str(erro_ssl).lower():
+            raise ErroComunicacao(
+                "Certificado TLS do provedor de IA não pôde ser verificado. "
+                "Se o ambiente interno usa certificado próprio, defina IA_TLS_VERIFY=0."
+            ) from None
+        raise ErroComunicacao(
+            "Falha de SSL/TLS ao contatar o provedor de IA."
+        ) from None
     except requests.exceptions.Timeout:
         raise ErroComunicacao(
             f"Tempo esgotado ({config['timeout']}s) ao contatar o provedor de IA."

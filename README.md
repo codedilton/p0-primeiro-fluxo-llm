@@ -1,31 +1,36 @@
 # p0-primeiro-fluxo-llm
 
-**Classificador de mensagens de atendimento** — projeto P0 do curso de agentes de IA.
+**Classificador de mensagens de atendimento** — projeto P0 do curso de agentes de IA (níveis Básico, Intermediário e Avançado concluídos; entrega final em container Docker).
 
 > Este programa recebe **a mensagem de um cliente ou colega** e devolve **uma de três categorias (dúvida, reclamação ou elogio)** para **quem atende ou organiza demandas**, que precisa disso porque **precisa priorizar e encaminhar mensagens sem ler todas manualmente**.
 
-## Entrada e saída
+## Como usar (visão rápida)
 
-- **Entrada:** uma mensagem em texto livre, digitada ou colada no terminal.
-- **Saída:** a categoria da mensagem, exibida no terminal.
-
-Exemplo de uso:
+A aplicação é **web**: abre no navegador, tem uma caixa de texto e um botão **Classificar**, e responde com a categoria da mensagem. Ela roda em container Docker e conversa com um provedor de IA compatível com OpenAI.
 
 ```
-$ python3 src/main.py
-Configuração carregada (modelo: openai/gpt-oss-20b).
-Cole ou digite a mensagem a classificar: Comprei um produto e ele chegou quebrado. Ja mandei tres e-mails e ninguem responde. Quero meu dinheiro de volta!
-Categoria: RECLAMAÇÃO
+Navegador ──POST /──▶ aplicação (Flask + gunicorn) ──▶ provedor de IA ──▶ categoria na página
 ```
 
-Mensagens que não se encaixam em nenhuma das três categorias recebem o rótulo "NÃO SE ENCAIXA EM NENHUMA CATEGORIA".
+Padrões de conexão (ajustáveis por variável de ambiente, sem tocar no código):
+
+| Variável | Padrão | Para quê |
+|---|---|---|
+| `IA_API_URL` | `https://llm-internal.softex:9001/v1/chat/completions` | Endpoint do provedor de IA (formato OpenAI). O endereço interno só é acessível de dentro da rede do container |
+| `IA_MODEL` | `qwen3.5:9b-q4_K_M` | Modelo que classifica |
+| `IA_API_KEY` | *(vazio)* | Credencial, se o provedor exigir |
+| `IA_NO_AUTH` | `0` | `1` = endpoint sem credencial |
+| `IA_TLS_VERIFY` | `0` | `0` = não verifica o certificado (o ambiente interno usa certificado próprio, sem cadeia pública — conforme o manual). `1` = verifica (provedores com TLS público) |
+| `IA_TIMEOUT` | `30` | Timeout da chamada, em segundos |
 
 ## Requisitos
 
-- Python 3.10 ou superior
-- Uma chave de API de um provedor de IA. O padrão do projeto é o [Groq](https://console.groq.com) (chave gratuita, sem cartão de crédito); outros provedores com endpoint compatível com OpenAI funcionam ajustando a configuração (ver abaixo).
+- **Para executar a entrega (container):** Docker
+- **Para desenvolver localmente:** Python 3.10+ e Docker (para os testes de container)
 
-## Instalação
+Versões utilizadas no desenvolvimento: Python 3.12 (base da imagem), Flask 3.1.3, Gunicorn 27.0.1, requests 2.34.2, python-dotenv 1.2.4.
+
+## Desenvolvimento local
 
 ```bash
 git clone https://github.com/codedilton/p0-primeiro-fluxo-llm.git
@@ -33,94 +38,84 @@ cd p0-primeiro-fluxo-llm
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
+
+cp .env.example .env      # preencha as variáveis do seu provedor
+python3 src/webapp.py     # http://localhost:8000
 ```
 
-## Configuração
+Credencial nenhuma fica no código: o `.env` (protegido pelo `.gitignore`) alimenta as variáveis localmente; no container, elas chegam pelo dashboard da plataforma.
 
-1. Copie o modelo de configuração e preencha a sua credencial:
+## Execução em container
 
 ```bash
-cp .env.example .env
+docker build -t ediltonsilvajrgmailcom:latest .
+docker run --rm -p 8000:8000 \
+  -e IA_API_URL="https://llm-internal.softex:9001/v1/chat/completions" \
+  -e IA_MODEL="qwen3.5:9b-q4_K_M" \
+  -e IA_NO_AUTH=1 -e IA_TLS_VERIFY=0 \
+  ediltonsilvajrgmailcom:latest
+# abra http://localhost:8000
 ```
 
-2. Edite o `.env` e defina `IA_API_KEY` com a chave do seu provedor de IA (no Groq, gere a chave em [console.groq.com/keys](https://console.groq.com/keys)). O `.env` **não** vai para o Git — está protegido pelo `.gitignore`.
+## Entrega na plataforma (ambiente interno)
 
-3. Opcional: para usar outro provedor com endpoint compatível com OpenAI, defina também no `.env`:
-
-```
-IA_API_URL=https://do-seu-provedor.com/v1/chat/completions
-IA_MODEL=nome-do-modelo
-```
-
-Nenhuma credencial fica no código: o programa carrega o `.env` automaticamente (via `python-dotenv`).
-
-## Como executar
+1. Salve a imagem em TAR (nome sem caracteres especiais, derivado do e-mail):
 
 ```bash
-python3 src/main.py
+docker save --output ediltonsilvajrgmailcom.tar ediltonsilvajrgmailcom:latest
 ```
 
-O programa pede a mensagem, envia ao provedor de IA e mostra a categoria. Se a mensagem vier vazia, ele alerta e dá uma segunda tentativa.
+2. No dashboard, faça **Upload** do `.tar` (imagem de ~130MB, limite de 1024MB).
+3. Configure **portas**: `8000` (a aplicação escuta em `0.0.0.0:8000`) e **variáveis de ambiente** (uma por linha, ex.: `IA_MODEL=qwen3.5:9b-q4_K_M`).
+4. **Inicie** o container: ele entra na rede `llm-network` e passa a alcançar o LLM interno pelo hostname. Acesse a aplicação pelo endereço do servidor + porta pública indicada no dashboard.
+
+Nota: dentro do container não há terminal — por isso a aplicação é web. Informações que precisam sobreviver a reinícios devem ficar em `/persistent` (este projeto não persiste nada).
 
 ## Organização do código
 
-Cada responsabilidade do ciclo vive em um módulo próprio:
-
 | Responsabilidade | Onde vive |
 |---|---|
-| Captura da entrada | `src/main.py` (`ler_entrada`) |
+| Rotas web, entrada e apresentação | `src/webapp.py` + `src/templates/index.html` |
 | Carregamento da configuração | `src/config.py` |
 | Preparação da solicitação | `src/llm_client.py` (`montar_solicitacao`) |
 | Chamada ao modelo | `src/llm_client.py` (`chamar_modelo`) |
 | Tratamento da resposta | `src/llm_client.py` (`extrair_texto`, `validar_categoria`) |
-| Apresentação do resultado | `src/main.py` (`exibir_resultado`) |
-
-Módulos de apoio: `src/prompts.py` (categorias válidas e montagem do prompt) e `src/erros.py` (os seis tipos de erro com nome próprio).
+| Prompt e categorias válidas | `src/prompts.py` |
+| Seis tipos de erro com nome próprio | `src/erros.py` |
+| Versão terminal (nível Intermediário, mantida) | `src/main.py` |
 
 ## Tratamento de erros
 
-Cada situação previsível tem uma exceção específica, uma mensagem compreensível e uma sugestão de próximo passo. Nenhum traceback técnico chega ao usuário; detalhes ficam disponíveis executando com `IA_DEBUG=1`.
+Cada situação previsível tem uma exceção específica, uma mensagem compreensível e uma sugestão de próximo passo. Na web, o erro aparece na própria página; nenhum traceback técnico chega ao usuário (detalhes ficam disponíveis com `IA_DEBUG=1`).
 
 | Situação | Exceção | Mensagem ao usuário |
 |---|---|---|
-| Credencial ausente | `ErroConfiguracao` | "Credencial ausente: defina IA_API_KEY no arquivo .env" |
+| Credencial ausente | `ErroConfiguracao` | "Credencial ausente: defina IA_API_KEY no ambiente (ou... IA_NO_AUTH=1)" |
 | Credencial inválida (HTTP 401/403) | `ErroAutenticacao` | "Credencial inválida: o provedor de IA recusou a chave" |
 | Limite de uso (HTTP 429) | `ErroServicoIndisponivel` | "Limite de uso do provedor atingido; aguarde e tente novamente" |
 | Serviço fora do ar (HTTP 5xx) | `ErroServicoIndisponivel` | "O provedor de IA está indisponível no momento" |
 | Timeout | `ErroComunicacao` | "Tempo esgotado ao contatar o provedor de IA" |
 | Falha de rede | `ErroComunicacao` | "Não foi possível conectar; verifique sua conexão" |
+| Certificado TLS não verificado | `ErroComunicacao` | "...Se o ambiente interno usa certificado próprio, defina IA_TLS_VERIFY=0" |
 | Resposta vazia ou inesperada | `ErroRespostaInvalida` | "O modelo não devolveu texto" / "resposta em formato inesperado" |
-| Entrada vazia (2 tentativas) | `ErroEntradaInvalida` | alerta na 1ª tentativa; encerramento controlado na 2ª |
+| Entrada vazia / muito longa | validação na rota | mensagem inline na página (HTTP 400) |
 
 ## Testes
 
-Os testes reais usam o serviço de verdade; os simulados verificam o comportamento sem rede (respostas e falhas fabricadas em memória). A distinção segue a especificação do nível Intermediário.
+A suíte automatizada exercita a **lógica local sem nenhuma chamada real ao LLM** (respostas e falhas fabricadas em memória), conforme o enunciado do Avançado:
 
-### Testes reais
+```bash
+pip install -r requirements-dev.txt
+python -m pytest tests/ -v
+# 32 passed
+```
 
-| # | Situação | Esperado | Obtido |
-|---|---|---|---|
-| 1 | Reclamação real ("produto chegou quebrado... quero meu dinheiro de volta") | RECLAMAÇÃO | RECLAMAÇÃO ✓ |
-| 2 | Dúvida real ("vocês têm na cor azul? qual o prazo?") | DÚVIDA | DÚVIDA ✓ |
-| 3 | Credencial ausente (pasta sem `.env`) | Mensagem clara, sem chamada à API | "Credencial ausente: defina IA_API_KEY..." ✓ |
-| 4 | Credencial inválida (chave falsa no `.env` → HTTP 401 real do serviço) | Mensagem clara, sem expor segredo | "Credencial inválida: o provedor de IA recusou a chave" ✓ |
-| 5 | Entrada vazia duas vezes | Alerta na 1ª, encerramento controlado na 2ª | "Nenhuma mensagem foi fornecida após duas tentativas." ✓ |
+Cobertura: prompt (blocos e sincronia com as categorias), configuração (padrões do ambiente interno, credencial ausente/presente, flags TLS/auth, timeout inválido), cliente (formato OpenAI, mapeamento de 401/429/503/timeout/rede/SSL, extração e normalização da resposta, credencial só no header) e rotas web (formulário, entradas inválidas, erro do provedor exibido sem crash, `/health`).
 
-### Testes simulados (sem rede)
-
-| # | Situação simulada | Esperado | Obtido |
-|---|---|---|---|
-| 6 | Timeout do provedor | `ErroComunicacao` com mensagem amigável | ✓ |
-| 7 | Falha de conexão | `ErroComunicacao` com mensagem amigável | ✓ |
-| 8 | HTTP 503 (fora do ar) | `ErroServicoIndisponivel` | ✓ |
-| 9 | HTTP 429 (limite) | `ErroServicoIndisponivel` | ✓ |
-| 10 | JSON em formato inesperado | `ErroRespostaInvalida` | ✓ |
-| 11 | Resposta vazia (content vazio) | `ErroRespostaInvalida` | ✓ |
-| 12 | Categoria fora do combinado ("talvez") | `ErroRespostaInvalida` | ✓ |
-| 13 | Normalização ("  Reclamacao  ") | categoria validada | ✓ |
+Testes **reais** registrados no [RELATORIO_EXECUCAO.md](RELATORIO_EXECUCAO.md): classificação de verdade (Groq como provedor público de teste), HTTP 401 autêntico com chave inválida e a mesma bateria **dentro do container** (formulário, classificação via HTTP, `/health`, erro amigável sem credencial, logs limpos). O teste final contra o LLM interno ocorre naturalmente após o upload, de dentro da rede do ambiente.
 
 ## Roadmap
 
-- [x] **Básico** — núcleo funcional: entrada → provedor de IA → saída, chave fora do código
-- [x] **Intermediário** — módulos com responsabilidade única, seis tipos de erro tratados especificamente, `.env.example`, testes reais e simulados
-- [ ] **Avançado** — testes automatizados na suíte, configuração externa dos parâmetros, registro de execução sem dados sensíveis, validação em ambiente limpo
+- [x] **Básico** — núcleo funcional no terminal, chave fora do código, tag `p0-basico`
+- [x] **Intermediário** — módulos com responsabilidade única, seis tipos de erro, testes reais e simulados, tag `p0-intermediario`
+- [x] **Avançado + 3ª etapa** — aplicação web em container Docker, configuração 100% por variáveis de ambiente, suíte automatizada sem rede, validação em ambiente limpo (container), tag `p0-avancado`

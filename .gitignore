@@ -9,3 +9,6 @@ venv/
 
 # Sistema operacional
 .DS_Store
+
+# Artefatos de entrega (imagem Docker exportada)
+*.tar
