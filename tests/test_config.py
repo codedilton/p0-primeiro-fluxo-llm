@@ -56,3 +56,20 @@ def test_timeout_invalido_cai_no_padrao(monkeypatch):
     monkeypatch.setenv("IA_API_KEY", "chave-de-teste")
     monkeypatch.setenv("IA_TIMEOUT", "abc")
     assert config.carregar()["timeout"] == 30.0
+
+
+def test_max_tokens_padrao_2048(monkeypatch):
+    monkeypatch.setenv("IA_API_KEY", "chave-de-teste")
+    assert config.carregar()["max_tokens"] == 2048
+
+
+def test_max_tokens_configuravel(monkeypatch):
+    monkeypatch.setenv("IA_API_KEY", "chave-de-teste")
+    monkeypatch.setenv("IA_MAX_TOKENS", "4096")
+    assert config.carregar()["max_tokens"] == 4096
+
+
+def test_max_tokens_invalido_cai_no_padrao(monkeypatch):
+    monkeypatch.setenv("IA_API_KEY", "chave-de-teste")
+    monkeypatch.setenv("IA_MAX_TOKENS", "muito")
+    assert config.carregar()["max_tokens"] == 2048

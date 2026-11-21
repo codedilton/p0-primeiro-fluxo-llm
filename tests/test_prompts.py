@@ -18,3 +18,8 @@ def test_categorias_validas_sincronizadas_com_o_prompt():
     p = prompts.montar_prompt_sistema().lower()
     for categoria in prompts.CATEGORIAS_VALIDAS:
         assert categoria in p
+
+
+def test_prompt_desativa_raciocinio_longo_do_qwen():
+    """/no_think evita esgotar max_tokens com raciocínio em classificação."""
+    assert "/no_think" in prompts.montar_prompt_sistema()
