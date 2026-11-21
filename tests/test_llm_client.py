@@ -36,6 +36,7 @@ def test_montar_solicitacao_tem_formato_openai_e_nao_vaza_credencial():
     corpo = llm_client.montar_solicitacao("olá", CONFIG)
     assert corpo["model"] == "modelo-de-teste"
     assert corpo["temperature"] == 0.0
+    assert corpo["max_tokens"] == 300
     assert corpo["messages"][0]["role"] == "system"
     assert corpo["messages"][1]["role"] == "user"
     assert "olá" in corpo["messages"][1]["content"]
@@ -55,6 +56,20 @@ def test_extrair_texto_de_json_estranho():
 def test_extrair_texto_de_resposta_vazia():
     corpo = {"choices": [{"message": {"role": "assistant", "content": ""}}]}
     with pytest.raises(ErroRespostaInvalida):
+        llm_client.extrair_texto(corpo)
+
+
+def test_resposta_vazia_por_limite_de_tokens_dá_diagnóstico_acionável():
+    corpo = {"choices": [{"message": {"role": "assistant", "content": ""},
+                          "finish_reason": "length"}]}
+    with pytest.raises(ErroRespostaInvalida, match="IA_MAX_TOKENS"):
+        llm_client.extrair_texto(corpo)
+
+
+def test_resposta_vazia_com_outro_motivo_informa_o_motivo():
+    corpo = {"choices": [{"message": {"role": "assistant", "content": ""},
+                          "finish_reason": "content_filter"}]}
+    with pytest.raises(ErroRespostaInvalida, match="content_filter"):
         llm_client.extrair_texto(corpo)
 
 

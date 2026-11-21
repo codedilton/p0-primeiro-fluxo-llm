@@ -18,7 +18,7 @@ PROMPT_SISTEMA = (
     "Categorias válidas: duvida, reclamacao, elogio, invalida. "
     "Se a mensagem não se encaixar em nenhuma, responda: INVALIDA. "
     "Responda apenas com a categoria, em minúsculas, sem pontuação "
-    "e sem nenhuma outra palavra."
+    "e sem nenhuma outra palavra. /no_think"
 )
 
 

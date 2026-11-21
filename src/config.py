@@ -22,7 +22,10 @@ PADRAO_MODEL = "qwen3.5:9b-q4_K_M"
 
 # Parâmetros do modelo (ajustáveis sem tocar no núcleo).
 TEMPERATURA = 0.0
-MAX_TOKENS = 300
+# Modelos de raciocínio gastam tokens "pensando" antes de escrever a
+# resposta final; um limite baixo esvazia o content (lição aprendida
+# com o gpt-oss-20b no Groq e confirmada com o qwen interno).
+MAX_TOKENS = 2048
 TIMEOUT_SEGUNDOS = 30
 
 
@@ -58,13 +61,15 @@ def carregar() -> dict:
 
     timeout_bruto = (os.environ.get("IA_TIMEOUT") or "").strip()
     timeout = float(timeout_bruto) if timeout_bruto.replace(".", "", 1).isdigit() else TIMEOUT_SEGUNDOS
+    max_tokens_bruto = (os.environ.get("IA_MAX_TOKENS") or "").strip()
+    max_tokens = int(max_tokens_bruto) if max_tokens_bruto.isdigit() else MAX_TOKENS
 
     return {
         "api_key": api_key,
         "api_url": api_url,
         "model": model,
         "temperature": TEMPERATURA,
-        "max_tokens": MAX_TOKENS,
+        "max_tokens": max_tokens,
         "timeout": timeout,
         "sem_autenticacao": sem_autenticacao,
         "verificar_tls": verificar_tls,

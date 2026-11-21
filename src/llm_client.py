@@ -115,15 +115,26 @@ def extrair_texto(dados: dict) -> str:
     durante o raciocínio — nesse caso, é resposta inválida.
     """
     try:
-        texto = dados["choices"][0]["message"].get("content") or ""
+        escolha = dados["choices"][0]
+        texto = escolha["message"].get("content") or ""
     except (KeyError, IndexError, TypeError, AttributeError):
         raise ErroRespostaInvalida(
             "A resposta do provedor de IA veio em um formato inesperado."
         ) from None
 
     if not texto.strip():
+        # Modelos de raciocínio podem esgotar o limite de tokens
+        # "pensando" e devolver content vazio. O finish_reason conta
+        # o que aconteceu: use-o para dar um diagnóstico acionável.
+        motivo = escolha.get("finish_reason") or "desconhecido"
+        if motivo == "length":
+            raise ErroRespostaInvalida(
+                "O modelo não devolveu texto: o limite de tokens se esgotou "
+                "durante o raciocínio. Defina IA_MAX_TOKENS com um valor maior "
+                "(ex.: 2048) e tente novamente."
+            )
         raise ErroRespostaInvalida(
-            "O modelo não devolveu texto. Tente novamente."
+            f"O modelo não devolveu texto (motivo informado: {motivo}). Tente novamente."
         )
     return texto
 
