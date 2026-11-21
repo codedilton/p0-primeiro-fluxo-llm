@@ -129,10 +129,38 @@ Testes **reais** (usam o serviço de verdade) e **simulados** (falhas fabricadas
 - **Como foi tratado:** verificação TLS controlada pela flag `IA_TLS_VERIFY` (padrão `0`, conforme o manual) e tratamento dedicado ao erro de SSL, com mensagem que distingue o problema do certificado e sugere a flag — incluindo caso o usuário a reative contra um provedor público.
 - **Por que permanece:** a verificação desligada é escolha deliberada para o ambiente interno (como o manual orienta); o risco de MITM é mitigado pelo isolamento da rede interna. Para provedores públicos, `IA_TLS_VERIFY=1` reativa a verificação.
 
-**4. Limitações aceitas do escopo.**
+**4. O modelo interno devolvia resposta vazia: raciocínio esgotando max_tokens (produção — tratado).**
+
+- **O que aconteceu:** no ambiente real da plataforma, toda classificação falhava com "O modelo não devolveu texto" — o `content` chegava vazio.
+- **Como foi identificado:** pela mensagem de erro da própria aplicação, que apontava para a resposta vazia; a explicação veio da repetição do padrão do `gpt-oss-20b` no Groq (a tag `:9b-q4_K_M` do `qwen3.5` é de modelo de raciocínio, formato Ollama): com `max_tokens=300`, o raciocínio esgotava o limite e a palavra final não cabia (`finish_reason: length`).
+- **Como foi tratado:** `IA_MAX_TOKENS` virou variável de ambiente com padrão 2048 (correção em configuração, sem tocar no núcleo); `/no_think` no prompt (interruptor do Qwen que desativa o raciocínio longo para classificação de uma palavra); e a resposta vazia agora diagnostica pelo `finish_reason` — o caso `length` sugere aumentar `IA_MAX_TOKENS`, outros motivos são exibidos. Corrigido no PR #4, imagem reconstruída e reenviada; após o re-upload, a classificação funcionou no ambiente real.
+- **Por que permanece:** o diagnóstico agora é automático; o valor do limite é ajustável por ambiente sem rebuild.
+
+**5. Requisições com linha inválida nos logs: "bare LF as line terminator" (produção — sem ação).**
+
+- **O que aconteceu:** o log do dashboard registrou repetidos `WARNING Invalid request ... 'bare LF as line terminator'` de um IP externo.
+- **Como foi identificado:** leitura dos logs do dashboard; o gunicorn recusa requisições HTTP cujas linhas terminam só com `\n` (exige `\r\n`, como o protocolo define — rejeição que também protege contra *request smuggling*).
+- **Como foi tratado:** nenhum — a requisição malformada é descartada na porta de entrada, antes da aplicação; trata-se de scanner de internet ou teste manual malformado batendo na porta pública, rotina em servidores expostos.
+- **Por que permanece:** é comportamento de defesa do servidor, não defeito do aplicativo. Como melhoria futura, o access log do gunicorn (`--access-logfile -`) pode ser ligado para registrar todas as requisições.
+
+**6. Timeout de 30 segundos em horários de pico do LLM compartilhado (produção — tratado por configuração).**
+
+- **O que aconteceu:** classificação ocasionalmente terminava com "Tempo esgotado (30.0s) ao contatar o provedor de IA".
+- **Como foi identificado:** pela mensagem amigável da aplicação; o limite é o `IA_TIMEOUT=30` do próprio software (o cliente HTTP aborta a espera), não da plataforma.
+- **Como foi tratado:** sem tocar em código — o requisito do Avançado de "alterar parâmetros sem modificar o núcleo" na prática: `IA_TIMEOUT=60` definido no dashboard da plataforma e container reiniciado. A cadeia de limites ficou documentada: 30/60s (aplicação) < 120s (gunicorn).
+- **Por que permanece:** todo cliente HTTP precisa de um limite; o valor agora é ajustável por ambiente, e os picos de uso do LLM compartilhado com a turma continuam sendo variáveis do ambiente.
+
+**7. Variáveis do dashboard não chegavam ao container (produção — tratado por operação).**
+
+- **O que aconteceu:** na primeira execução real, a aplicação reportou "Credencial ausente" mesmo com a imagem pronta.
+- **Como foi identificado:** pela mensagem de erro, que indicou exatamente a variável faltante antes de gastar qualquer chamada ao LLM.
+- **Como foi tratado:** cadastro de `IA_NO_AUTH=1` (o endpoint interno não exige credencial) no dashboard e reinício do container — o manual avisa que alterações de variáveis só se aplicam no próximo início.
+- **Por que permanece:** é o fluxo de operação da plataforma (parar → alterar → iniciar); a aplicação já dá a mensagem certa quando a configuração não chega.
+
+**8. Limitações aceitas do escopo.**
 
 - A validação de credencial inválida depende do provedor responder 401/403; provedores com outro comportamento exigiriam ajuste no mapa de códigos HTTP.
-- A suíte automatizada cobre a lógica local (prompt, config, cliente com falhas simuladas, rotas web); um teste de integração contra o endpoint interno real só é possível de dentro da rede do ambiente — validação feita por execução manual após o upload.
+- A suíte automatizada cobre a lógica local (prompt, config, cliente com falhas simuladas, rotas web); um teste de integração contra o endpoint interno real só é possível de dentro da rede do ambiente — validação realizada de fato após o upload, com a classificação funcionando no ambiente real.
 - Uma única mensagem por requisição: o programa classifica e responde, sem histórico de conversa (fora do escopo do P0).
 
 ## Uso de IA no desenvolvimento
@@ -141,10 +169,10 @@ Testes **reais** (usam o serviço de verdade) e **simulados** (falhas fabricadas
 - **Tarefa delegada:** criação da aula de mecanismo (API REST, parâmetros, estrutura de prompt, tipos de erro); estruturação do projeto; escrita do código inicial (`src/main.py`); execução dos testes; operações de Git/GitHub (branch, PR, tag, release) e elaboração deste relatório. Na 3ª etapa: aplicação web (Flask), Dockerfile, suíte `pytest` e build/testes da imagem no Docker local.
 - **Resultado aproveitado:** a aula como base conceitual; o código e o README como estrutura inicial; a suíte de testes executada com saída registrada; imagem Docker construída e validada dentro do container.
 - **Correções e alterações realizadas:** o modelo indicado pela aula foi trocado após o teste real (404); o `max_tokens` foi corrigido ao observar o comportamento do modelo de raciocínio; os materiais do curso foram mantidos fora do repositório público; no Intermediário, o desenho de módulos e a hierarquia de exceções foram discutidos e aprovados com o autor antes da implementação, e as mensagens foram genericizadas para "provedor de IA" a pedido do autor; na 3ª etapa, padrões apontados ao LLM interno e TLS sem verificação por padrão, conforme decisão do autor e manual do ambiente.
-- **Forma de verificação:** execução real de cenários de sucesso e falha em todos os níveis (incluindo HTTP 401 autêntico e classificação real dentro do container via Groq); suíte automatizada de 32 testes sem rede; operações Git verificadas no remoto (`git ls-remote`, `gh pr view`); imagem conferida (`docker images`, ausência do `.env` na imagem, logs sem segredos). Regra adotada: todo o código entregue pode ser explicado pelo autor.
+- **Forma de verificação:** execução real de cenários de sucesso e falha em todos os níveis (incluindo HTTP 401 autêntico e classificação real dentro do container via Groq); suíte automatizada de 38 testes sem rede; operações Git verificadas no remoto (`git ls-remote`, `gh pr view`); imagem conferida (`docker images`, ausência do `.env` na imagem, logs sem segredos). Validação final no ambiente da plataforma: aplicação acessível pela porta pública, classificação respondida pelo LLM interno, erro amigável diante de variável ausente e ajustes de operação (timeout, max_tokens) feitos sem rebuild. Regra adotada: todo o código entregue pode ser explicado pelo autor.
 
 ## Reflexão final
 
-- **Principal aprendizado:** "funciona na minha máquina" não é entrega — e a documentação do provedor não é verdade imutável: catálogo e comportamento do modelo precisam ser confirmados com chamadas reais antes de codar. A jornada somou três lições de projeto: separar *detectar* um erro de *explicá-lo*; isolar a lógica de negócio da casca de interação (o terminal virou web sem tocar nos módulos); e a entrega final é um ambiente (imagem), não só um programa — com configuração, saúde e limites próprios.
-- **Competência mais desenvolvida:** C04 (ambiente funcional e reprodutível) — a validação aconteceu em um ambiente genuinamente limpo: a imagem foi construída do zero, a aplicação testada dentro do container e a entrega empacotada para execução por terceiros em outra rede.
-- **Aspecto a aprimorar:** um teste de integração contra o endpoint interno real (possível apenas de dentro da rede do ambiente) e a evolução da suíte para cenários de carga/uso concorrente do gunicorn.
+- **Principal aprendizado:** "funciona na minha máquina" não é entrega — e a documentação do provedor não é verdade imutável: catálogo e comportamento do modelo precisam ser confirmados com chamadas reais antes de codar. A jornada somou três lições de projeto: separar *detectar* um erro de *explicá-lo*; isolar a lógica de negócio da casca de interação (o terminal virou web sem tocar nos módulos); e a entrega final é um ambiente (imagem), não só um programa — com configuração, saúde e limites próprios. Em produção, a lição que se confirmou duas vezes: **o mesmo bug (resposta vazia) ensinou a corrigir por configuração, não por código** — e erros bem escritos são a melhor ferramenta de diagnóstico.
+- **Competência mais desenvolvida:** C04 (ambiente funcional e reprodutível) — a validação aconteceu em um ambiente genuinamente limpo: a imagem foi construída do zero, a aplicação testada dentro do container e a entrega empacotada para execução por terceiros em outra rede. Na operação real, tunear timeout e limite de tokens **pelo dashboard, sem rebuild**, foi a competência entregue de forma prática.
+- **Aspecto a aprimorar:** um teste de integração automatizado contra o endpoint interno (possível apenas de dentro da rede do ambiente) e a evolução da suíte para cenários de carga/uso concorrente do gunicorn.
